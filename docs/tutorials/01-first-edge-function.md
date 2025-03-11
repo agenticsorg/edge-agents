@@ -105,26 +105,16 @@ This will start your function at `http://localhost:54321/functions/v1/hello-worl
 
 You can test your function using `curl` or any HTTP client:
 
-### Basic Test (No Parameters)
-
-```bash
-curl http://localhost:54321/functions/v1/hello-world
+### Export `anon key`
 ```
-
-Expected response:
-```json
-{
-  "message": "Hello World!",
-  "timestamp": "2025-03-10T23:30:00.000Z",
-  "version": "1.0.0"
-}
+export ANON_KEY=<anon key>
 ```
-
 ### Test with a Custom Name
 
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer "$ANON_KEY \
   -d '{"name":"Alice"}' \
   http://localhost:54321/functions/v1/hello-world
 ```
