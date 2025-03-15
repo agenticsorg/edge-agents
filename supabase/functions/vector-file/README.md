@@ -2,7 +2,7 @@
 
 😎 Vector Agent: Built with OpenAI's new Vector & Web Search, this autonomous agent turns static docs into auto updating knowledge hubs.
 
-I built this in under an hour on todays Ai Hacker League live Coding session. Crazy. 
+I built this in under an hour on today's Ai Hacker League live Coding session. Crazy. 
 
 Imagine uploading thousands of PDFs, docs, and markdown files, then asking complex questions and getting precise, ranked responses, not just from your stored documents but fused with real-time web data for a complete answer.
 
