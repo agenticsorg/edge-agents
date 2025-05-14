@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/agenticsorg-edge-agents-badge.png)](https://mseep.ai/app/agenticsorg-edge-agents)
+
 # Agentic Edge Functions
 
 Welcome to the Agentic Edge Functions repository by the Agentics Foundation. This open-source project serves as the technological foundation for distributed autonomous AI agents operating at the edge of networks.
