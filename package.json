@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
+    "agentic-flow": "^1.10.1",
     "dotenv": "^16.4.7"
   }
 }
