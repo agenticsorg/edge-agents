@@ -131,3 +131,10 @@ dist
 .venv/
 .pytest_cache
 __pycache__
+
+# AgentDB database files
+agentdb.db
+agentdb.db-*
+*.db
+*.db-shm
+*.db-wal
