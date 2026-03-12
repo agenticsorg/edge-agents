@@ -1,50 +1,55 @@
 /**
  * AuthManager class for handling authentication in the MCP server
- * This class provides methods for validating tokens and verifying requests
+ * Uses timing-safe comparison to prevent timing attacks.
  */
 export class AuthManager {
   private secretKey: string;
-  
-  /**
-   * Create a new AuthManager instance
-   * @param secretKey The secret key to use for authentication. If not provided, it will use the MCP_SECRET_KEY environment variable.
-   */
+  private encoder: TextEncoder;
+
   constructor(secretKey: string) {
     if (!secretKey) {
       throw new Error("Secret key is required");
     }
     this.secretKey = secretKey;
+    this.encoder = new TextEncoder();
   }
-  
+
   /**
-   * Validate a token against the secret key
-   * @param token The token to validate
-   * @returns True if the token is valid, false otherwise
+   * Validate a token using timing-safe comparison
    */
   validateToken(token: string): boolean {
-    if (!token) {
+    if (!token) return false;
+
+    const a = this.encoder.encode(token);
+    const b = this.encoder.encode(this.secretKey);
+
+    // Different lengths already leak info, but we still do constant-time compare
+    if (a.byteLength !== b.byteLength) {
+      // Compare against self to burn the same CPU time, then return false
+      crypto.subtle.timingSafeEqual(b, b);
       return false;
     }
-    return token === this.secretKey;
+
+    return crypto.subtle.timingSafeEqual(a, b);
   }
-  
+
   /**
    * Verify a request by checking the Authorization header
-   * @param request The request to verify
-   * @returns True if the request is authenticated, false otherwise
    */
   verifyRequest(request: Request): boolean {
     const authHeader = request.headers.get('Authorization');
-    if (!authHeader) {
-      return false;
-    }
-    
+    if (!authHeader) return false;
+
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    if (!match) {
-      return false;
-    }
-    
-    const token = match[1];
-    return this.validateToken(token);
+    if (!match) return false;
+
+    return this.validateToken(match[1]);
+  }
+
+  /**
+   * Generate a unique request ID for tracing
+   */
+  static generateRequestId(): string {
+    return crypto.randomUUID();
   }
 }
