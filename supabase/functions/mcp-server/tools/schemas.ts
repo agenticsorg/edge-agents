@@ -1,6 +1,6 @@
 // tools/schemas.ts
 
-// Database query tool schema
+// Database query tool schema — uses structured filters, no raw SQL
 export const databaseQuerySchema = {
   type: 'object',
   properties: {
@@ -8,13 +8,21 @@ export const databaseQuerySchema = {
       type: 'string',
       description: 'Table name',
     },
-    query: {
-      type: 'string',
-      description: 'SQL query to execute',
+    select: {
+      type: 'array',
+      description: 'Columns to select (defaults to all)',
+    },
+    filter: {
+      type: 'object',
+      description: 'Filter conditions as key-value pairs (column: value)',
+    },
+    order: {
+      type: 'object',
+      description: 'Order by config: { column: string, ascending: boolean }',
     },
     limit: {
       type: 'number',
-      description: 'Maximum number of results to return',
+      description: 'Maximum number of results to return (max 1000)',
     },
   },
   required: ['table'],

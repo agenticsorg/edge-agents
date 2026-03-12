@@ -1,357 +1,341 @@
+/**
+ * Agent Alpha — Research Agent
+ *
+ * Specialized agent for research, web search, and summarization.
+ * Uses the shared protocol, channel helpers, and tool registry.
+ * Routes LLM calls through the ModelProvider for cost optimization.
+ *
+ * Upgraded from calculator-only to a full research agent with tools
+ * ported from scripts/agentic-mcp/.
+ */
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { StateGraph, END } from "npm:@langchain/langgraph@0.0.5";
+import {
+  AgentMessage,
+  createAgentMessage,
+  isValidAgentMessage,
+} from "../_shared/protocol.ts";
+import { createChannel, sendMessage } from "../_shared/channel.ts";
+import { ToolRegistry, Tool, ToolContext, createToolContext, trackAction, remember } from "../_shared/tools.ts";
+import { createHandoffTool } from "../_shared/handoff.ts";
+import { Logger } from "../_shared/logger.ts";
+import { ModelProvider } from "../gateway/model-provider.ts";
 
 // Environment variables
-const AGENT_NAME = Deno.env.get("AGENT_NAME") || "agent-alpha";
+const AGENT_NAME = Deno.env.get("AGENT_NAME") || "agent_alpha";
 const SUPABASE_URL = Deno.env.get("SB_URL") || "";
 const SUPABASE_KEY = Deno.env.get("SB_SERVICE_KEY") || "";
-console.log(`[${AGENT_NAME}] Environment: SB_URL=${SUPABASE_URL ? "set" : "not set"}, SB_SERVICE_KEY=${SUPABASE_KEY ? "set" : "not set"}`);
-console.log(`[${AGENT_NAME}] Starting agent service...`);
 const LOGS_CHANNEL = "agent-manager-logs";
 
-// Get OpenRouter API key from environment variables (try both formats)
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") || 
-                          Deno.env.get("VITE_OPENROUTER_API_KEY");
-// Get model from environment variables (try both formats)
-const MODEL = Deno.env.get("OPENROUTER_MODEL") || Deno.env.get("VITE_OPENROUTER_MODEL") || "openai/o3-mini-high";
-console.log(`[${AGENT_NAME}] Using model: ${MODEL}, OpenRouter API key: ${OPENROUTER_API_KEY ? "set" : "not set"}`);
+const logger = new Logger(AGENT_NAME);
 
 // Create Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const modelProvider = new ModelProvider(logger);
 
-// Message types
-enum MessageType {
-  QUERY = 'query',
-  RESPONSE = 'response',
-  COMMAND = 'command',
-  NOTIFICATION = 'notification',
-  STATUS = 'status',
-  ERROR = 'error'
-}
+// ─── Define Research Tools ───────────────────────────────────────────────────
 
-// Define available tools
-const tools = [
-  {
-    name: "Calculator",
-    description: "Performs arithmetic calculations. Usage: Calculator[expression]",
-    run: (input: string) => {
-      // Simple safe evaluation for arithmetic expressions
-      try {
-        // Allow only numbers and basic math symbols in input for safety
-        if (!/^[0-9.+\-*\/()\\s]+$/.test(input)) {
-          return "Invalid expression";
-        }
-        // Evaluate the expression
-        const result = Function("return (" + input + ")")();
-        return String(result);
-      } catch (err) {
-        return "Error: " + (err as Error).message;
-      }
+const webSearchTool: Tool = {
+  name: "WebSearch",
+  description: "Search the web for the latest information on any topic. Use for current events, facts, and recent data.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'The search query' },
+      depth: { type: 'string', description: 'Search depth: brief, detailed, or comprehensive' },
+    },
+    required: ['query'],
+  },
+  execute: async (params, ctx) => {
+    trackAction(ctx, 'websearch_started');
+    const query = params.query as string;
+    const depth = (params.depth as string) || 'detailed';
+
+    const result = await modelProvider.complete({
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a research assistant. Provide factual, well-sourced information. Include relevant data points and cite sources when possible.',
+        },
+        {
+          role: 'user',
+          content: `Research the following topic (${depth} depth): ${query}`,
+        },
+      ],
+      model: depth === 'comprehensive' ? 'powerful' : 'balanced',
+      max_tokens: depth === 'comprehensive' ? 2000 : 1000,
+    });
+
+    trackAction(ctx, 'websearch_completed');
+    remember(ctx, `search_${Date.now()}`, { query, depth });
+    return result.content;
+  },
+};
+
+const summarizeTool: Tool = {
+  name: "Summarize",
+  description: "Create a concise summary of text content with key points and insights.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      content: { type: 'string', description: 'The text content to summarize' },
+      format: { type: 'string', description: 'Format: bullet_points, narrative, or outline' },
+    },
+    required: ['content'],
+  },
+  execute: async (params, ctx) => {
+    trackAction(ctx, 'summarize_started');
+    const content = params.content as string;
+    const format = (params.format as string) || 'bullet_points';
+
+    const result = await modelProvider.complete({
+      messages: [
+        {
+          role: 'system',
+          content: `You are an expert summarizer. Create a ${format} summary. Focus on key points, important details, and significant conclusions.`,
+        },
+        { role: 'user', content: `Summarize the following:\n\n${content}` },
+      ],
+      model: 'fast',
+      max_tokens: 800,
+    });
+
+    trackAction(ctx, 'summarize_completed');
+    return result.content;
+  },
+};
+
+const calculatorTool: Tool = {
+  name: "Calculator",
+  description: "Performs arithmetic calculations. Only supports numbers and basic math operators.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      expression: { type: 'string', description: 'The arithmetic expression (e.g., "2 + 3 * 4")' },
+    },
+    required: ['expression'],
+  },
+  execute: async (params, _ctx) => {
+    const input = params.expression as string;
+    if (!/^[0-9.+\-*\/()\\s]+$/.test(input)) {
+      return "Invalid expression: only numbers and basic math operators allowed";
     }
-  }
-];
+    try {
+      const result = Function("return (" + input + ")")();
+      return String(result);
+    } catch (err) {
+      return `Error: ${(err as Error).message}`;
+    }
+  },
+};
 
-// Create a system prompt for the ReAct agent
-const toolDescriptions = tools.map(t => `${t.name}: ${t.description}`).join("\n");
+// ─── Setup Tool Registry ─────────────────────────────────────────────────────
+
+const registry = new ToolRegistry();
+registry.register(webSearchTool);
+registry.register(summarizeTool);
+registry.register(calculatorTool);
+
+// Add handoff tool
+const handoffTool = createHandoffTool(supabase, AGENT_NAME, {
+  agent_beta: "agent_beta",
+});
+registry.register(handoffTool);
+
+// ─── ReAct Agent Loop ────────────────────────────────────────────────────────
+
 const systemPrompt = `
-You are a smart assistant named ${AGENT_NAME} with access to the following tools:
-${toolDescriptions}
+You are a smart research assistant named ${AGENT_NAME} with access to the following tools:
+${registry.getToolDescriptions()}
 
 When answering the user, you may use the tools to gather information or calculate results.
 Follow this format strictly:
 Thought: <your reasoning here>
-Action: <ToolName>[<tool input>]
+Action: <ToolName>[<JSON parameters>]
 Observation: <result of the tool action>
 ... (you can repeat Thought/Action/Observation as needed) ...
 Thought: <final reasoning>
 Answer: <your final answer to the user's query>
 
-Only provide one action at a time, and wait for the observation before continuing. 
+For tool actions, use JSON parameters like: WebSearch[{"query": "latest AI trends"}]
+Only provide one action at a time, and wait for the observation before continuing.
 If the answer is directly known or once you have gathered enough information, output the final Answer.
 `;
 
-// Connect to the agent's inbox channel
-const channel = supabase.channel(AGENT_NAME);
+async function runReActAgent(query: string, ctx: ToolContext): Promise<string> {
+  logger.info("Running ReAct agent", { query: query.substring(0, 100) });
 
-// Handle incoming messages
-channel.on('broadcast', { event: 'message' }, async (payload) => {
-  const message = payload;
-  console.log(`[${AGENT_NAME}] Received message from ${message.sender}: ${message.content}`);
-  
-  // Skip processing messages sent by this agent to prevent loops
-  if (message.sender === AGENT_NAME) {
-    console.log(`[${AGENT_NAME}] Skipping message from self to prevent loops`);
-    const logsChannel = supabase.channel(LOGS_CHANNEL);
-    await logsChannel.subscribe();
-    await logsChannel.send({
-      type: 'broadcast',
-      event: 'message',
-      payload: { sender: AGENT_NAME, content: "Message skipped to prevent loops", type: MessageType.STATUS, timestamp: Date.now() }
-    });
-    return;
-  }
-  console.log(`[${AGENT_NAME}] Message details: ${JSON.stringify(message, null, 2)}`);
-  
-  // Process the message
-  const response = await processMessage(message);
-  
-  // Send the response
-  if (response) {
-    // Send response to the sender's channel
-    const responseChannelName = message.sender;
-    
-    // Also send to a dedicated response channel that agent-manager might be listening on
-    // Format: agent-manager-response-{messageId}
-    let responseSpecificChannel = null;
-    if (message.messageId || message.correlationId) {
-      const messageId = message.messageId || message.correlationId;
-      responseSpecificChannel = supabase.channel(`agent-manager-response-${messageId}`);
-    }
-    
-    const targetChannel = supabase.channel(responseChannelName);    
-    await targetChannel.subscribe();
-    await targetChannel.send({
-      type: 'broadcast',
-      event: 'message',
-      payload: {
-        sender: AGENT_NAME,
-        content: response.content,
-        type: MessageType.RESPONSE,
-        timestamp: Date.now(),
-        correlationId: response.correlationId
-      }
-    });
-    console.log(`[${AGENT_NAME}] Sent response to ${responseChannelName}`);
-    
-    // If we have a message ID, also send to the specific response channel
-    if (responseSpecificChannel) {
-      await responseSpecificChannel.subscribe();
-      await responseSpecificChannel.send({
-        type: 'broadcast',
-        event: 'message',
-        payload: {
-          sender: AGENT_NAME,
-          content: response.content,
-          type: MessageType.RESPONSE,
-          timestamp: Date.now(),
-          correlationId: response.correlationId
-        }
-      });
-      console.log(`[${AGENT_NAME}] Also sent response to message-specific channel`);
-    }
-    
-    // Also send a copy to the logs channel for monitoring
-    const logsChannel = supabase.channel(LOGS_CHANNEL);
-    await logsChannel.subscribe();
-    await logsChannel.send({
-      type: 'broadcast',
-      event: 'message',
-      payload: { 
-        sender: AGENT_NAME,
-        content: response.content,
-        type: MessageType.RESPONSE,
-        timestamp: Date.now(),
-        correlationId: response.correlationId,
-        note: `Response from ${AGENT_NAME} to ${responseChannelName}` }
-    });
-    console.log(`[${AGENT_NAME}] Sent copy of response to ${LOGS_CHANNEL} channel`);
-  }
-});
-
-// Subscribe to the channel
-const { error } = await channel.subscribe();
-if (error) {
-  console.error(`[${AGENT_NAME}] Failed to subscribe to channel:`, error);
-  Deno.exit(1);
-}
-
-console.log(`[${AGENT_NAME}] Listening for messages...`);
-
-// Process a message and return a response
-async function processMessage(message: any): Promise<any> {
-  console.log(`[${AGENT_NAME}] Processing message with ID: ${message.correlationId || message.id || "unknown"}`);
-  
-  // Check if OpenRouter API key is available
-  if (!OPENROUTER_API_KEY) {
-    return {
-      sender: AGENT_NAME,
-      content: "Error: OpenRouter API key is not configured. Please set the OPENROUTER_API_KEY environment variable.",
-      type: MessageType.ERROR,
-      timestamp: Date.now(),
-      correlationId: message.id || message.correlationId
-    };
-  }
-  
-  // Run the ReAct agent with a timeout
-  let answer;
-  try {
-    // Set a timeout of 25 seconds to ensure we respond before the Edge Function times out
-    answer = await Promise.race([
-      console.log(`[${AGENT_NAME}] Starting ReAct agent for query: ${message.content}`),
-      runReActAgent(message.content),
-      new Promise<string>(resolve => setTimeout(() => resolve("I apologize, but I couldn't complete the calculation in time. Please try a simpler query."), 25000))
-    ]);
-  } catch (error) {
-    answer = `Error processing your request: ${error.message}`;
-  }
-  
-  console.log(`[${AGENT_NAME}] Final answer: ${answer}`);
-  return {
-    sender: AGENT_NAME,
-    content: answer,
-    type: MessageType.RESPONSE,
-    timestamp: Date.now(),
-    correlationId: message.id || message.correlationId
-  };
-}
-
-// Run the ReAct agent
-async function runReActAgent(query: string): Promise<string> {
-  console.log(`[${AGENT_NAME}] Running ReAct agent with query: "${query}"`);
-  
-  const messages = [
+  const messages: Array<{ role: string; content: string }> = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: query }
+    { role: "user", content: query },
   ];
-  
-  // The agent will iterate, allowing up to 10 reasoning loops
+
   for (let step = 0; step < 10; step++) {
-    // Call the LLM via OpenRouter
-    console.log(`[${AGENT_NAME}] Step ${step+1}/10: Calling OpenRouter API with ${messages.length} messages`);
-    const assistantReply = await callOpenRouter(messages);
-    
-    // Append the assistant's reply to the message history
+    const result = await modelProvider.complete({
+      messages: messages as any,
+      model: "balanced",
+      temperature: 0,
+      max_tokens: 1500,
+      stop: ["Observation:"],
+    });
+
+    const assistantReply = result.content;
     messages.push({ role: "assistant", content: assistantReply });
-    
-    // Check if the assistant's reply contains a final answer
+
+    // Check for final answer
     const answerMatch = assistantReply.match(/Answer:\s*(.*)$/s);
     if (answerMatch) {
-      // Return the text after "Answer:" as the final answer
-      console.log(`[${AGENT_NAME}] Found final answer in step ${step+1}`);
+      logger.info("Found answer", { step: step + 1 });
       return answerMatch[1].trim();
     }
-    
-    // Otherwise, look for an action to perform
-    const actionMatch = assistantReply.match(/Action:\s*([^\[]+)\[([^\]]+)\]/);
+
+    // Look for tool action
+    const actionMatch =
+      assistantReply.match(/Action:\s*(\w+)\[(\{[\s\S]*?\})\]/) ||
+      assistantReply.match(/Action:\s*([^\[]+)\[([^\]]+)\]/);
+
     if (actionMatch) {
       const toolName = actionMatch[1].trim();
       const toolInput = actionMatch[2].trim();
-      console.log(`[${AGENT_NAME}] Step ${step+1}: Found action: ${toolName}[${toolInput}]`);
-      
-      // Find the tool by name
-      const tool = tools.find(t => t.name.toLowerCase() === toolName.toLowerCase());
+      logger.info("Tool action", { tool: toolName, step: step + 1 });
+
       let observation: string;
-      
-      if (!tool) {
-        observation = `Tool "${toolName}" not found`;
-      } else {
+      try {
+        let params: Record<string, unknown>;
         try {
-          const result = await tool.run(toolInput);
-          observation = String(result);
-          console.log(`[${AGENT_NAME}] Step ${step+1}: Tool ${toolName} result: ${observation}`);
-        } catch (err) {
-          observation = `Error: ${(err as Error).message}`;
-          console.log(`[${AGENT_NAME}] Step ${step+1}: Tool ${toolName} error: ${observation}`);
+          params = JSON.parse(toolInput);
+        } catch {
+          const tool = registry.get(toolName);
+          if (tool) {
+            const firstRequired = tool.inputSchema.required?.[0] || 'input';
+            params = { [firstRequired]: toolInput };
+          } else {
+            params = { input: toolInput };
+          }
         }
+
+        const result = await registry.execute(toolName, params, ctx);
+        observation = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      } catch (err) {
+        observation = `Error: ${(err as Error).message}`;
       }
-      
-      // Append the observation as a system message for the next LLM call
+
       messages.push({ role: "system", content: `Observation: ${observation}` });
-      
-      // Continue loop for next reasoning step
       continue;
     }
-    
-    console.log(`[${AGENT_NAME}] Step ${step+1}: No action or answer found in response, breaking loop`);
-    // If no Action or Answer was found, break to avoid an endless loop
+
+    logger.warn("No action or answer in response", { step: step + 1 });
     return assistantReply.trim();
   }
-  
-  console.log(`[${AGENT_NAME}] Reached maximum steps (10) without finding an answer`);
+
   return "I apologize, but I was unable to reach a conclusion within the step limit.";
 }
 
-// Call OpenRouter API
-async function callOpenRouter(messages: any[], maxRetries = 3): Promise<string> {
-  let retryCount = 0;
-  let lastError: Error | null = null;
+// ─── Message Processing ──────────────────────────────────────────────────────
 
-  while (retryCount <= maxRetries) {
-    try {
-      if (retryCount > 0) {
-        // Send notification about retry to logs channel
-        await sendRetryNotification(retryCount, maxRetries, lastError?.message || "Unknown error");
-        
-        // Exponential backoff: wait longer between each retry
-        const backoffMs = Math.min(1000 * Math.pow(2, retryCount - 1), 8000);
-        console.log(`[${AGENT_NAME}] Retry ${retryCount}/${maxRetries} after ${backoffMs}ms backoff`);
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
-      }
+async function processMessage(message: AgentMessage): Promise<AgentMessage> {
+  const ctx = createToolContext(message.workflowId);
 
-      console.log(`[${AGENT_NAME}] Calling OpenRouter API with model: ${MODEL}, message count: ${messages.length}`);
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": `${SUPABASE_URL}`, // Optional but recommended
-          "X-Title": `Agent ${AGENT_NAME}`   // Optional but recommended
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          messages: messages,
-          temperature: 0.0,
-          stop: ["Observation:"],
-          max_tokens: 1000
-        })
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        const errorMessage = `OpenRouter API error: HTTP ${response.status} - ${errorText}`;
-        console.error(`[${AGENT_NAME}] ${errorMessage}`);
-        lastError = new Error(errorMessage);
-        retryCount++;
-        continue;
+  try {
+    const answer = await Promise.race([
+      runReActAgent(message.payload.content, ctx),
+      new Promise<string>(resolve =>
+        setTimeout(() => resolve("I couldn't complete the task in time. Please try a simpler query."), 25000)
+      ),
+    ]);
+
+    return createAgentMessage(
+      'response',
+      AGENT_NAME,
+      message.sender,
+      answer,
+      {
+        correlationId: message.correlationId,
+        workflowId: message.workflowId,
+        tools_used: ctx.actions.filter(a => a.startsWith('tool:')).map(a => a.replace('tool:', '')),
       }
-      
-      const data = await response.json();
-      const content = data.choices[0].message.content;
-      return content;
-    } catch (error) {
-      console.error(`[${AGENT_NAME}] Error calling OpenRouter API:`, error);
-      lastError = error instanceof Error ? error : new Error(String(error));
-      retryCount++;
-    }
+    );
+  } catch (error) {
+    return createAgentMessage(
+      'error',
+      AGENT_NAME,
+      message.sender,
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+      { correlationId: message.correlationId, workflowId: message.workflowId }
+    );
   }
-  
-  // If we've exhausted all retries, send a final notification and throw the last error
-  await sendRetryNotification(retryCount, maxRetries, lastError?.message || "Unknown error", true);
-  throw lastError || new Error("Failed to call OpenRouter API after multiple retries");
 }
 
-// Send notification about retry to logs channel
-async function sendRetryNotification(retryCount: number, maxRetries: number, errorMessage: string, isFinal = false): Promise<void> {
-  const logsChannel = supabase.channel(LOGS_CHANNEL);
-  await logsChannel.subscribe();
-  await logsChannel.send({
-    type: 'broadcast',
-    event: 'message',
-    payload: {
-      sender: AGENT_NAME,
-      content: isFinal 
-        ? `⚠️ Failed to call OpenRouter API after ${retryCount} retries. Error: ${errorMessage}`
-        : `🔄 Retry ${retryCount}/${maxRetries} for OpenRouter API call. Error: ${errorMessage}`,
-      type: MessageType.NOTIFICATION,
-      timestamp: Date.now()
-    }
-  });
-  console.log(`[${AGENT_NAME}] Sent retry notification to ${LOGS_CHANNEL} channel`);
-}
+// ─── Channel Listener ────────────────────────────────────────────────────────
 
-// Start a simple HTTP server for health checks
-Deno.serve({ port: 8000 }, (req) => {
-  return new Response(`agent-alpha is running`, {
-    headers: { "Content-Type": "text/plain" }
-  });
+const channel = supabase.channel(AGENT_NAME);
+
+channel.on('broadcast', { event: 'message' }, async (payload: any) => {
+  let msg: any;
+  if (payload?.payload?.payload) {
+    msg = payload.payload.payload;
+  } else if (payload?.payload) {
+    msg = payload.payload;
+  } else {
+    msg = payload;
+  }
+
+  if (msg?.sender === AGENT_NAME) return;
+
+  let agentMsg: AgentMessage;
+  if (isValidAgentMessage(msg)) {
+    agentMsg = msg;
+  } else {
+    agentMsg = createAgentMessage(
+      'request',
+      msg?.sender || 'unknown',
+      AGENT_NAME,
+      msg?.content || '',
+      { correlationId: msg?.correlationId || msg?.id || msg?.messageId }
+    );
+  }
+
+  logger.info("Received message", { from: agentMsg.sender, type: agentMsg.type });
+
+  const response = await processMessage(agentMsg);
+
+  await sendMessage(supabase, agentMsg.sender, response);
+
+  const responseChannel = `${agentMsg.sender}-response-${agentMsg.correlationId}`;
+  await sendMessage(supabase, responseChannel, response);
+
+  try {
+    const logsChannel = await createChannel(supabase, LOGS_CHANNEL);
+    await logsChannel.send({
+      type: 'broadcast',
+      event: 'message',
+      payload: response,
+    });
+  } catch {
+    // Non-critical
+  }
+});
+
+channel.subscribe((status: string, err?: Error) => {
+  if (err) {
+    logger.error("Failed to subscribe to channel", { error: err.message });
+  }
+  if (status === "SUBSCRIBED") {
+    logger.info("Subscribed to channel");
+  }
+});
+
+logger.info("Agent started, listening for messages");
+
+// Health check HTTP server
+Deno.serve({ port: 8000 }, (_req) => {
+  return new Response(
+    JSON.stringify({
+      agent: AGENT_NAME,
+      status: "running",
+      tools: registry.listNames(),
+      timestamp: new Date().toISOString(),
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
 });
