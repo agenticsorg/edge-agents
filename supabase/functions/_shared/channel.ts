@@ -42,7 +42,7 @@ export async function createChannel(
       reject(new Error(`Channel subscription timeout: ${name}`));
     }, 10000);
 
-    channel.subscribe((status: string, err: Error | null) => {
+    channel.subscribe((status: string, err?: Error) => {
       if (status === "SUBSCRIBED") {
         clearTimeout(timeout);
         activeChannels.set(name, channel);

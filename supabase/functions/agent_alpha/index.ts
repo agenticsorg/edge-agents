@@ -316,11 +316,14 @@ channel.on('broadcast', { event: 'message' }, async (payload: any) => {
   }
 });
 
-const { error } = await channel.subscribe();
-if (error) {
-  logger.error("Failed to subscribe to channel", { error: error.message });
-  Deno.exit(1);
-}
+channel.subscribe((status: string, err?: Error) => {
+  if (err) {
+    logger.error("Failed to subscribe to channel", { error: err.message });
+  }
+  if (status === "SUBSCRIBED") {
+    logger.info("Subscribed to channel");
+  }
+});
 
 logger.info("Agent started, listening for messages");
 
