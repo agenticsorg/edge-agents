@@ -15,7 +15,7 @@ export class AuthManager {
   }
 
   /**
-   * Validate a token using timing-safe comparison
+   * Validate a token using constant-time comparison to prevent timing attacks
    */
   validateToken(token: string): boolean {
     if (!token) return false;
@@ -23,14 +23,26 @@ export class AuthManager {
     const a = this.encoder.encode(token);
     const b = this.encoder.encode(this.secretKey);
 
-    // Different lengths already leak info, but we still do constant-time compare
+    // Constant-time comparison: always check all bytes
     if (a.byteLength !== b.byteLength) {
-      // Compare against self to burn the same CPU time, then return false
-      crypto.subtle.timingSafeEqual(b, b);
+      // Still do a dummy compare to burn CPU time, then return false
+      this.constantTimeCompare(b, b);
       return false;
     }
 
-    return crypto.subtle.timingSafeEqual(a, b);
+    return this.constantTimeCompare(a, b);
+  }
+
+  /**
+   * Constant-time byte comparison (prevents timing side-channel attacks)
+   */
+  private constantTimeCompare(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.byteLength !== b.byteLength) return false;
+    let result = 0;
+    for (let i = 0; i < a.byteLength; i++) {
+      result |= a[i] ^ b[i];
+    }
+    return result === 0;
   }
 
   /**
