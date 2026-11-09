@@ -35,6 +35,24 @@ npm install -g @agentics.org/agentic-mcp
 npm install @agentics.org/agentic-mcp
 ```
 
+**Supported environments:** Node.js ≥ 18 on Linux, macOS or Windows. It speaks MCP over stdio, so any MCP client (Claude Desktop, Claude Code, Cursor) can launch it. The `research`, `websearch`, `summarize` and `customer_support` tools need `OPENAI_API_KEY`. `database_query` also needs Supabase credentials.
+
+### Quick check
+
+List the tools over MCP stdio. Listing makes no OpenAI call, so a placeholder key is enough:
+
+```bash
+(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'; sleep 1
+ printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 2) \
+ | OPENAI_API_KEY=sk-placeholder npx -y @agentics.org/agentic-mcp 2>/dev/null | grep '"id":2' | jq -c '[.result.tools[].name]'
+```
+
+Output (1.0.5, Node 22, clean install):
+
+```text
+["research","customer_support","summarize","websearch"]
+```
+
 ## 🏗️ Architecture
 
 The Agentic MCP server is built on a modular architecture that enables seamless integration between AI agents and external tools:

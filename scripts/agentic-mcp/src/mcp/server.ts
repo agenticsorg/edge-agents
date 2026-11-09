@@ -15,6 +15,7 @@ import { DatabaseTool } from './tools/database';
 import { SupportTool } from './tools/support';
 import { SummarizeTool } from './tools/summarize';
 import { WebSearchTool } from './tools/websearch';
+import { toToolDefinitions } from './tool-definitions';
 
 export class OpenAIAgentMCPServer {
   private server: Server;
@@ -111,7 +112,7 @@ export class OpenAIAgentMCPServer {
       if (this.tracingEnabled) {
         console.error('Available tools:', tools.map(t => t.name));
       }
-      return { tools };
+      return { tools: toToolDefinitions(tools) };
     });
 
     // Execute tool

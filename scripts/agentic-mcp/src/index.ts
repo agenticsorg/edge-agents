@@ -8,7 +8,7 @@ import { OpenAIAgentMCPServer } from './mcp/server';
 
 // 🔹 Step 1: Load environment variables
 config();
-console.log("🔹 Step 1: Environment variables loaded.");
+console.error("🔹 Step 1: Environment variables loaded.");
 
 // 🔹 Step 2: Read necessary environment variables
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -18,7 +18,7 @@ const SUPABASE_ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN || process.env.S
 if (!OPENAI_API_KEY) {
   throw new Error('OPENAI_API_KEY environment variable is required');
 }
-console.log("🔹 Step 2: Environment variables verified.");
+console.error("🔹 Step 2: Environment variables verified.");
 
 // 🔹 Step 3: Initialize OpenAi Agentic MCP Server
 const server = new OpenAIAgentMCPServer({
@@ -49,10 +49,10 @@ const server = new OpenAIAgentMCPServer({
     rules: []
   }
 });
-console.log("🔹 Step 3: MCP Server initialized.");
+console.error("🔹 Step 3: MCP Server initialized.");
 
 // 🔹 Step 4: Start the MCP Server
-console.log("🚀 Starting OpenAi Agentic MCP Server ...");
+console.error("🚀 Starting OpenAi Agentic MCP Server ...");
 server.serve().catch(error => {
   console.error("❌ Server error:", error);
   process.exit(1);
