@@ -35,7 +35,7 @@ npm install -g @agentics.org/agentic-mcp
 npm install @agentics.org/agentic-mcp
 ```
 
-**Supported environments:** Node.js ≥ 18 on Linux, macOS or Windows. It speaks MCP over stdio, so any MCP client (Claude Desktop, Claude Code, Cursor) can launch it. The `research`, `websearch`, `summarize` and `customer_support` tools need `OPENAI_API_KEY`. `database_query` also needs Supabase credentials.
+**Supported environments:** Node.js ≥ 20 on Linux, macOS or Windows. It speaks MCP over stdio, so any MCP client (Claude Desktop, Claude Code, Cursor) can launch it. The `research`, `websearch`, `summarize` and `customer_support` tools need `OPENAI_API_KEY`. `database_query` also needs Supabase credentials.
 
 ### Quick check
 
