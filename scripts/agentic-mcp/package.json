@@ -1,8 +1,8 @@
 {
   "name": "@agentics.org/agentic-mcp",
-  "version": "1.0.4",
-  "description": "Agentic MCP Server with advanced AI capabilities including web search, summarization, database querying, and customer support. Built by the Agentics Foundation to enhance AI agents with powerful tools for research, content generation, and data analysis.",
-  "main": "dist/index.js",
+  "version": "1.0.5",
+  "description": "MCP server from the Agentics Foundation that gives AI assistants OpenAI-backed research, web search, summarization, customer-support and Supabase query tools.",
+  "main": "dist/lib.js",
   "bin": {
     "agentic-mcp": "./dist/index.js"
   },
@@ -36,18 +36,18 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agenticsorg/edge-agents.git",
+    "url": "git+https://github.com/agenticsorg/edge-agents.git",
     "directory": "scripts/agentic-mcp"
   },
-  "homepage": "https://agentics.org",
+  "homepage": "https://ruv.io",
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
-    "@supabase/supabase-js": "^2.7.1",
-    "dotenv": "^16.4.7",
-    "openai": "^4.20.1"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@supabase/supabase-js": "^2.80.0",
+    "dotenv": "^16.6.1",
+    "openai": "^6.49.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
@@ -55,5 +55,12 @@
     "jest": "^29.7.0",
     "ts-jest": "^29.2.6",
     "typescript": "^5.0.0"
+  },
+  "types": "dist/lib.d.ts",
+  "bugs": {
+    "url": "https://github.com/agenticsorg/edge-agents/issues"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
