@@ -19,6 +19,8 @@ jobs:
         dir:
           - .
           - scripts/agentic-mcp
+          - scripts/sparc2
+          - scripts/agents/mcp-hello
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
